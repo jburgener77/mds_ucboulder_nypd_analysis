@@ -1,0 +1,145 @@
+---
+title: "NYPD Shooting Incident Data Report"
+author: "Justin B"
+date: "2026-05-06"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Required Packages
+
+```{r Load Packages}
+library(tidyverse)
+```
+
+
+## Data Import
+Data obtained from **https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD** 
+
+```{r Read CSV}
+nypd_csv_path <- "NYPD_Shooting_Incident_Data__Historic_.csv"
+nypd_data <- read_csv(nypd_csv_path, skip_empty_rows = TRUE)
+```
+```{r Data Display}
+head(nypd_data)
+```
+```{r Data Str}
+summary(nypd_data)
+```
+```{r Unique Race Values}
+unique(nypd_data$VIC_RACE)
+```
+
+
+## Clean Data
+```{r Clean Data}
+# Get the number of PERP on VIC crime
+nypd_data_clean <- nypd_data %>%
+  filter(!is.na(PERP_RACE)) %>%
+  filter(!is.na(VIC_RACE)) %>%
+  filter(!(PERP_RACE %in% c('(null)', 'UNKNOWN'))) %>%
+  filter(!(VIC_RACE %in% c('(null)', 'UNKNOWN'))) %>%
+  mutate(PERP_ON_VIC_RACES = paste0(PERP_RACE, '>', VIC_RACE))
+
+nypd_data_clean
+```
+
+## Data Analysis
+
+### Murders by Borough
+
+```{r}
+murder_by_borough <-  nypd_data_clean %>%
+  group_by(BORO) %>%
+  count(BORO, name = 'COUNT')
+
+murder_by_borough %>%
+  ggplot(aes(x = BORO, y = COUNT)) +
+  geom_bar(stat = 'identity') +
+  theme_bw()
+```
+
+### Race on Race Crime
+```{r Race on Race}
+race_on_race <- nypd_data_clean %>%
+  count(PERP_ON_VIC_RACES, name = 'COUNT') %>%
+  arrange(desc(COUNT)) %>%
+  head(10)
+
+race_on_race %>%
+  ggplot(aes(x = reorder(PERP_ON_VIC_RACES, -COUNT), y = COUNT)) +
+  geom_bar(stat = 'identity') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle=45, hjust=1)) +
+  xlab('Perp>Victim Race')
+```
+What is the proportion on same-race versus difference-race race-on-race crime?
+```{r}
+nypd_data_clean %>%
+  count(PERP_ON_VIC_RACES, name = 'COUNT') %>%
+  arrange(desc(COUNT)) %>%
+  mutate(PERP_RACE = gsub(">.*.", "", PERP_ON_VIC_RACES)) %>%
+  mutate(VICTIM_RACE = gsub(".*.>", "", PERP_ON_VIC_RACES)) %>%
+  mutate(RACE_ON_RACE_TYPE = ifelse(PERP_RACE == VICTIM_RACE, "same-race", "different-race")) %>%
+  group_by(RACE_ON_RACE_TYPE) %>%
+  summarize(count = sum(COUNT)) %>%
+  mutate(prop = count / sum(count)) %>%
+  ggplot(aes(x = RACE_ON_RACE_TYPE, y = prop)) +
+  geom_bar(stat='identity')
+```
+
+
+## Data Modelling
+Is the increased prevelance of same-race crime consistent across all boroughs?
+
+```{r}
+df <- nypd_data_clean %>%
+  count(PERP_ON_VIC_RACES, BORO, name = "COUNT") %>%
+  mutate(
+    PERP_RACE   = sub(">.*", "", PERP_ON_VIC_RACES),
+    VICTIM_RACE = sub(".*>", "", PERP_ON_VIC_RACES),
+    RACE_ON_RACE_TYPE = ifelse(PERP_RACE == VICTIM_RACE,
+                               "same-race", "different-race")
+  )
+
+head(df)
+```
+
+```{r}
+model <- glm(
+  COUNT ~ BORO + PERP_RACE + VICTIM_RACE + PERP_RACE:VICTIM_RACE,
+  family = poisson,
+  data = df
+)
+
+summary(model)
+```
+```{r, fig.width=10, fig.height=10}
+df$expected <- predict(model, type = "response")
+df$pearson_resid <- residuals(model, type = "pearson")
+
+ggplot(df, aes(PERP_RACE, VICTIM_RACE, fill = pearson_resid)) +
+  geom_tile() +
+  facet_wrap(~ BORO) +
+  theme_minimal() +
+  coord_equal() +
+  theme(axis.text.x.bottom = element_text(angle=90, hjust=1))
+```
+
+```{r}
+ggplot(df, aes(expected, COUNT)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0) +
+  theme_minimal()
+```
+
+Looks fairly 1-to-1 linear, which makes sense since we're comparing against the data 
+we have trained again. To test this appropriately most likely would need to do cross-validation.
+
+# Brief comment on Bias
+
+The analysis may be biased towards certain demographics which have a larger proportion of crimes and 
+skew the definition of same-race crime. For example, certain ethnicity in New York may be less prevalent and therefore less likely to conduct same-race crimes, or more likely to conduct different-race crime. It's important to consider this when conducting analysis like this.
