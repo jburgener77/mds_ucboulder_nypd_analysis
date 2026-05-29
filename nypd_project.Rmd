@@ -20,7 +20,7 @@ library(tidyverse)
 Data obtained from **https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD** 
 
 ```{r Read CSV}
-nypd_csv_path <- "NYPD_Shooting_Incident_Data__Historic_.csv"
+nypd_csv_path <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
 nypd_data <- read_csv(nypd_csv_path, skip_empty_rows = TRUE)
 ```
 ```{r Data Display}
